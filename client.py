@@ -3,6 +3,7 @@ import argparse
 import logging
 import socket
 import sys
+import time
 
 import pyaudio
 
@@ -42,6 +43,23 @@ def play_stream(config):
         p.terminate()
         return
 
+    # --- Output File Setup ---
+    output_filename = f"audio_stream_{config.sample_rate}hz_{config.bits}bit_{config.channels}ch.txt"
+    logging.info(f"Writing audio data to human-readable file: {output_filename}")
+    output_file = open(output_filename, 'w')
+    
+    # Write header information
+    output_file.write(f"Audio Stream Data\n")
+    output_file.write(f"Sample Rate: {config.sample_rate} Hz\n")
+    output_file.write(f"Bit Depth: {config.bits} bits\n")
+    output_file.write(f"Channels: {config.channels}\n")
+    output_file.write(f"Buffer Size: {config.buffer_size} bytes\n\n")
+    output_file.write("Timestamp,ChunkNumber,SampleValues\n")
+    output_file.write("-" * 80 + "\n")
+    
+    # Counter for chunks received
+    chunk_counter = 0
+
     # --- Socket Connection ---
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -56,6 +74,35 @@ def play_stream(config):
                     if not data:
                         logging.info("Stream ended (server disconnected).")
                         break
+                                        # Convert to human-readable format and write to file
+                    timestamp = time.strftime("%H:%M:%S.%f")[:-3]
+                    chunk_counter += 1
+                    
+                    # Convert binary data to numerical values based on bit depth
+                    if config.bits == 8:
+                        # For 8-bit audio, interpret as unsigned bytes
+                        values = list(data)
+                    else:  # 16-bit
+                        # For 16-bit audio, interpret as signed shorts (2 bytes per sample)
+                        values = []
+                        for i in range(0, len(data), 2):
+                            if i+1 < len(data):
+                                value = int.from_bytes(data[i:i+2], byteorder='little', signed=True)
+                                values.append(value)
+                    
+                    # Write a sample of values (first 10 or fewer if less available)
+                    sample_size = min(10, len(values))
+                    sample_values = ", ".join(str(values[i]) for i in range(sample_size))
+                    
+                    output_file.write(f"{timestamp},{chunk_counter},[{sample_values}...]\n")
+                    
+                    # Every 100 chunks, also write detailed values to separate section
+                    if chunk_counter % 100 == 0:
+                        output_file.write("\nDetailed Sample Values for Chunk #{chunk_counter}:\n")
+                        for i, value in enumerate(values):
+                            output_file.write(f"  Sample {i}: {value}\n")
+                        output_file.write("-" * 80 + "\n")
+
                     # Write received data to the audio stream
                     stream.write(data)
                 except socket.error as e:
